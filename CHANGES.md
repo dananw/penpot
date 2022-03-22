@@ -4,6 +4,9 @@
 
 ### :boom: Breaking changes
 ### :sparkles: New features
+
+- Added newsletter subscription modal and profile option [Taiga #2772](https://tree.taiga.io/project/penpot/us/2772)
+
 ### :bug: Bugs fixed
 ### :arrow_up: Deps updates
 ### :heart: Community contributions by (Thank you!)
