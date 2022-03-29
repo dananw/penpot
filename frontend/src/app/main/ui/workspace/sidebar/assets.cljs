@@ -38,6 +38,7 @@
    [app.util.i18n :as i18n :refer [tr]]
    [app.util.keyboard :as kbd]
    [app.util.router :as rt]
+   [app.util.timers :as ts]
    [cljs.spec.alpha :as s]
    [cuerdas.core :as str]
    [okulary.core :as l]
@@ -272,55 +273,194 @@
 
 (mf/defc components-item
   [{:keys [component renaming listing-thumbs? selected-components
-           on-asset-click on-context-menu on-drag-start do-rename cancel-rename]}]
-  [:div {:key (:id component)
-         :class-name (dom/classnames
-                      :selected (contains? selected-components (:id component))
-                      :grid-cell @listing-thumbs?
-                      :enum-item (not @listing-thumbs?))
-         :id (str "component-shape-id-" (:id component))
-         :draggable true
-         :on-click #(on-asset-click % (:id component) nil)
-         :on-context-menu (on-context-menu (:id component))
-         :on-drag-start (partial on-drag-start component)}
-   [:& component-svg {:group (get-in component [:objects (:id component)])
-                      :objects (:objects component)}]
-   (let [renaming? (= renaming (:id component))]
-     [:& editable-label
-      {:class-name (dom/classnames
-                    :cell-name @listing-thumbs?
-                    :item-name (not @listing-thumbs?)
-                    :editing renaming?)
-       :value (cph/merge-path-item (:path component) (:name component))
-       :tooltip (cph/merge-path-item (:path component) (:name component))
-       :display-value (if @listing-thumbs?
-                        (:name component)
-                        (cph/compact-name (:path component)
-                                          (:name component)))
-       :editing? renaming?
-       :disable-dbl-click? true
-       :on-change do-rename
-       :on-cancel cancel-rename}])])
+           on-asset-click on-context-menu on-drag-start do-rename
+           cancel-rename selected-components-full selected-components-paths]}]
+  (let [
+        item-ref       (mf/use-ref)
+
+        dragging? (mf/use-state false)
+
+        components-to-group (mf/use-var [])
+
+        set-drag (fn [event drag]
+                   (when (not (dnd/from-child? event))
+                     (reset! dragging? drag)))
+
+        create-group
+        (fn [group-name]
+          (st/emit! (dwu/start-undo-transaction))
+          (apply st/emit!
+                 (->> @components-to-group
+                      (map #(dwl/rename-component
+                             (:id %)
+                             (add-group % group-name)))))
+          (st/emit! (dwu/commit-undo-transaction)))
+
+        on-drop
+        (fn [event]
+          (set-drag event false)
+          (when (not (contains? selected-components (:id component)))
+            (when (every? #(= % (:path component)) selected-components-paths)
+              (do
+                (reset! components-to-group (conj selected-components-full component))
+                (modal/show! :name-group-dialog {:accept create-group})))))
+
+        on-drag-over
+        (mf/use-callback
+         (fn [event]
+           (dom/prevent-default event)))
+
+        on-drag-enter
+        (mf/use-callback
+         (mf/deps selected-components)
+         (fn [event]
+           (when (and
+                  (every? #(= % (:path component)) selected-components-paths)
+                  (not (contains? selected-components (:id component))))
+             (set-drag event true))))
+
+        on-drag-leave
+        (mf/use-callback
+         (fn [event]
+           (set-drag event false)))
+
+        create-counter-element
+        (fn [_element file-count]
+          (let [counter-el (dom/create-element "div")]
+            (dom/set-property! counter-el "class" "drag-counter")
+            (dom/set-text! counter-el (str file-count))
+            counter-el))
+
+        set-drag-image
+         (fn [event num-selected]
+           (let [offset          (dom/get-offset-position (.-nativeEvent event))
+                 item-el         (mf/ref-val item-ref)
+                 counter-el      (create-counter-element item-el num-selected)]
+
+              ;; set-drag-image requires that the element is rendered and
+              ;; visible to the user at the moment of creating the ghost
+              ;; image (to make a snapshot), but you may remove it right
+              ;; afterwards, in the next render cycle.
+             (dom/append-child! item-el counter-el)
+             (dnd/set-drag-image! event item-el (:x offset) (:y offset))
+             (ts/raf #(.removeChild ^js item-el counter-el))))
+
+        on-component-drag-start
+        (fn [event]
+          (let [num-selected (if (contains? selected-components (:id component))
+                               (count selected-components)
+                               1)]
+          (when (not (contains? selected-components (:id component)))
+            (st/emit! (dw/unselect-all-assets)
+                      (dw/toggle-selected-assets (:id component) :components)))
+          (on-drag-start component event)
+            (when (> num-selected 1)
+          (set-drag-image event num-selected))))]
+
+    [:div {:key (:id component)
+           :ref item-ref
+           :class-name (dom/classnames
+                        :selected (contains? selected-components (:id component))
+                        :grid-cell @listing-thumbs?
+                        :enum-item (not @listing-thumbs?))
+           :id (str "component-shape-id-" (:id component))
+           :draggable true
+           :on-click #(on-asset-click % (:id component) nil)
+           :on-context-menu (on-context-menu (:id component))
+           :on-drag-start on-component-drag-start
+           :on-drag-enter on-drag-enter
+           :on-drag-leave on-drag-leave
+           :on-drag-over on-drag-over
+           :on-drop on-drop
+           }
+
+     [:& component-svg {:group (get-in component [:objects (:id component)])
+                        :objects (:objects component)}]
+     (let [renaming? (= renaming (:id component))]
+       [:& editable-label
+        {:class-name (dom/classnames
+                      :cell-name @listing-thumbs?
+                      :item-name (not @listing-thumbs?)
+                      :editing renaming?)
+         :value (cph/merge-path-item (:path component) (:name component))
+         :tooltip (cph/merge-path-item (:path component) (:name component))
+         :display-value (if @listing-thumbs?
+                          (:name component)
+                          (cph/compact-name (:path component)
+                                            (:name component)))
+         :editing? renaming?
+         :disable-dbl-click? true
+         :on-change do-rename
+         :on-cancel cancel-rename}]
+       (when @dragging?
+         [:div.dragging]))]))
 
 (mf/defc components-group
   [{:keys [file-id prefix groups open-groups renaming listing-thumbs? selected-components on-asset-click
-           on-drag-start do-rename cancel-rename on-rename-group on-ungroup on-context-menu]}]
-  (let [group-open? (get open-groups prefix true)]
+           on-drag-start do-rename cancel-rename on-rename-group on-group on-ungroup on-context-menu
+           selected-components-full]}]
+  (let [dragging? (mf/use-state false)
+        group-open? (get open-groups prefix true)
+        selected-components-paths (map #(:path %) selected-components-full)
+        set-drag (fn [event drag]
+                   (when (not (dnd/from-child? event))
+                     (reset! dragging? drag)))
 
-    [:*
+        on-drag-enter
+        (mf/use-callback
+         (mf/deps selected-components-paths)
+         (fn [event]
+           (dom/stop-propagation event)
+           (when (not (every? #(= % prefix) selected-components-paths))
+             (set-drag event true))))
+
+        on-drag-leave
+        (mf/use-callback
+         (fn [event]
+           (dom/stop-propagation event)
+           (set-drag event false)))
+
+        on-drag-over
+        (mf/use-callback
+         (fn [event]
+           (dom/prevent-default event)))
+
+        on-drop
+        (fn [event]
+          (dom/stop-propagation event)
+          (set-drag event false)
+          (when (not (every? #(= % prefix) selected-components-paths))
+            (doseq [target-component selected-components-full]
+              (st/emit!
+               (dwl/rename-component
+                (:id target-component)
+                (cph/merge-path-item prefix (:name target-component)))))))]
+
+    [:div {:on-drag-enter on-drag-enter
+           :on-drag-leave on-drag-leave
+           :on-drag-over on-drag-over
+           :on-drop on-drop}
      [:& asset-group-title {:file-id file-id
                             :box :components
                             :path prefix
                             :group-open? group-open?
                             :on-rename on-rename-group
                             :on-ungroup on-ungroup}]
+
      (when group-open?
        [:*
         (let [components (get groups "" [])]
           [:div {:class-name (dom/classnames
                               :asset-grid @listing-thumbs?
                               :big @listing-thumbs?
-                              :asset-enum (not @listing-thumbs?))}
+                              :asset-enum (not @listing-thumbs?))
+                 :on-drag-enter on-drag-enter
+                 :on-drag-leave on-drag-leave
+                 :on-drag-over on-drag-over
+                 :on-drop on-drop
+                 }
+           (when @dragging?
+             [:div.grid-placeholder])
            (for [component components]
              [:& components-item {:component component
                                   :renaming renaming
@@ -329,8 +469,11 @@
                                   :on-asset-click on-asset-click
                                   :on-context-menu on-context-menu
                                   :on-drag-start on-drag-start
+                                  :on-group on-group
                                   :do-rename do-rename
-                                  :cancel-rename cancel-rename}])])
+                                  :cancel-rename cancel-rename
+                                  :selected-components-full selected-components-full
+                                  :selected-components-paths selected-components-paths}])])
         (for [[path-item content] groups]
           (when-not (empty? path-item)
             [:& components-group {:file-id file-id
@@ -346,7 +489,9 @@
                                   :cancel-rename cancel-rename
                                   :on-rename-group on-rename-group
                                   :on-ungroup on-ungroup
-                                  :on-context-menu on-context-menu}]))])]))
+                                  :on-context-menu on-context-menu
+                                  :selected-components-full selected-components-full
+                                  :selected-components-paths selected-components-paths}]))])]))
 
 (mf/defc components-box
   [{:keys [file-id local? components listing-thumbs? open? reverse-sort? open-groups selected-assets
@@ -356,13 +501,14 @@
 
         menu-state (mf/use-state auto-pos-menu-state)
 
-        selected-components (:components selected-assets)
-        multi-components?   (> (count selected-components) 1)
-        multi-assets?       (or (seq (:graphics selected-assets))
-                                (seq (:colors selected-assets))
-                                (seq (:typographies selected-assets)))
+        selected-components      (:components selected-assets)
+        selected-components-full (filter #(contains? selected-components (:id %)) components)
+        multi-components?        (> (count selected-components) 1)
+        multi-assets?            (or (seq (:graphics selected-assets))
+                                     (seq (:colors selected-assets))
+                                     (seq (:typographies selected-assets)))
 
-        groups              (group-assets components reverse-sort?)
+        groups                   (group-assets components reverse-sort?)
 
         on-duplicate
         (mf/use-callback
@@ -505,8 +651,10 @@
                             :do-rename do-rename
                             :cancel-rename cancel-rename
                             :on-rename-group on-rename-group
+                            :on-group on-group
                             :on-ungroup on-ungroup
-                            :on-context-menu on-context-menu}]
+                            :on-context-menu on-context-menu
+                            :selected-components-full selected-components-full}]
       (when local?
         [:& auto-pos-menu
          {:on-close on-close-menu
