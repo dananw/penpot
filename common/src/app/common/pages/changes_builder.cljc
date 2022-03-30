@@ -268,7 +268,7 @@
    (assert-objects changes)
    (let [page-id      (::page-id (meta changes))
          component-id (::component-id (meta changes))
-         objects (lookup-objects changes)
+         objects      (lookup-objects changes)
 
          generate-operation
          (fn [operations attr old new ignore-geometry?]
@@ -287,21 +287,18 @@
          (fn [changes id]
            (let [old-obj (get objects id)
                  new-obj (update-fn old-obj)
-
-                 attrs (or attrs (d/concat-set (keys old-obj) (keys new-obj)))
+                 attrs   (or attrs (d/concat-set (keys old-obj) (keys new-obj)))
 
                  {rops :rops uops :uops}
                  (reduce #(generate-operation %1 %2 old-obj new-obj ignore-geometry?)
                          {:rops [] :uops []}
                          attrs)
 
-                 uops (cond-> uops
-                        (seq uops)
-                        (conj {:type :set-touched :touched (:touched old-obj)}))
+                 uops    (cond-> uops
+                           (seq uops)
+                           (conj {:type :set-touched :touched (:touched old-obj)}))
 
-                 change (cond-> {:type :mod-obj
-                                 :id id}
-
+                 change (cond-> {:type :mod-obj :id id}
                           (some? page-id)
                           (assoc :page-id page-id)
 
@@ -566,7 +563,7 @@
                              :name name
                              :shapes new-shapes})
                       (into (map mk-change) updated-shapes))))
-        (update :undo-changes 
+        (update :undo-changes
                 (fn [undo-changes]
                   (-> undo-changes
                       (conj {:type :del-component
