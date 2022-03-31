@@ -8,12 +8,14 @@
   (:require
    [app.common.colors :as clr]
    [app.common.data :as d]
+   [app.common.pages.helpers :as cph]
    [app.main.data.modal :as md]
    [app.main.data.workspace.changes :as dch]
    [app.main.data.workspace.layout :as layout]
    [app.main.data.workspace.state-helpers :as wsh]
    [app.main.data.workspace.texts :as dwt]
    [app.main.repo :as rp]
+   [app.util.color :as uc]
    [beicon.core :as rx]
    [potok.core :as ptk]))
 
@@ -179,12 +181,12 @@
   (ptk/reify ::change-fill
     ptk/WatchEvent
     (watch [_ state _]
-      (let [change (fn [shape attrs]
+      (let [change-fn (fn [shape attrs]
                      (-> shape
                          (cond-> (not (contains? shape :fills))
                            (assoc :fills []))
                          (assoc-in [:fills position] (into {} attrs))))]
-        (transform-fill state ids color change)))))
+        (transform-fill state ids color change-fn)))))
 
 (defn change-fill-and-clear
   [ids color]
@@ -390,3 +392,22 @@
     (update [_ state]
       (-> state
           (assoc-in [:workspace-global :editing-stop] spot)))))
+
+(defn manage-color-in-palette
+  [color is-alt?]
+  (ptk/reify ::manage-color-in-palette
+    ptk/WatchEvent
+    (watch [_ state _]
+      (let [objects  (wsh/lookup-page-objects state)
+            selected (->> (wsh/lookup-selected state)
+                          (cph/clean-loops objects))
+            ids      (into []
+                           (comp (keep (d/getf objects))
+                                 (mapcat (fn [shape]
+                                           (cons (:id shape)
+                                                 (when-not (cph/frame-shape? shape)
+                                                   (cph/get-children-ids objects (:id shape)))))))
+                           selected)]
+        (if is-alt?
+          (rx/of (change-stroke ids (merge uc/empty-color color) 0))
+          (rx/of (change-fill ids (merge uc/empty-color color) 0)))))))
