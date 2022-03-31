@@ -481,15 +481,13 @@
         (let [page     (wsh/lookup-page state)
               objects  (:objects page)
               selected (wsh/lookup-selected state)
-              delta    (if (and move-delta? (= (count selected) 1))
-                         (let [obj (get objects (first selected))]
-                           (calc-duplicate-delta obj state objects))
-                         (gpt/point 0 0))
+              obj (get objects (first selected))
+              delta    (calc-duplicate-delta obj state objects)
 
               changes (->> (prepare-duplicate-changes objects page selected delta it)
                            (duplicate-changes-update-indices objects selected))
 
-              id-original (when (= (count selected) 1) (first selected))
+              id-original (first selected)
 
               selected (->> changes
                             :redo-changes
@@ -498,7 +496,7 @@
                             (map #(get-in % [:obj :id]))
                             (into (d/ordered-set)))
 
-              id-duplicated (when (= (count selected) 1) (first selected))]
+              id-duplicated (first selected)]
 
           (rx/of (dch/commit-changes changes)
                  (select-shapes selected)
